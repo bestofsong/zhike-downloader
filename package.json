@@ -1,15 +1,17 @@
 {
   "name": "zhike-downloader",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "download manager",
   "main": "Downloader.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
-    "react-native-fs": "^1.5.1",
     "lodash": "^4.17.2",
-    "zhike-path-utils": "^1.0.0"
+    "zhike-path-utils": "^2.0.0"
+  },
+  "peerDependencies": {
+    "react-native-fs": "^2.3.3"
   },
   "repository": {
     "type": "git",
