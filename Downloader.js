@@ -83,6 +83,7 @@ Downloader.prototype.addDownload = function (url, toPath, startHandler, completi
           500,
         ),
       })
+      .promise
       .then((completeInfo) => {
         this._notifyComplete(url, completeInfo);
       })
