@@ -21,11 +21,11 @@ Downloader.prototype.isDownloading = function (url) {
 Downloader.prototype.download = function (params: {
   url: string,
   toPath:string,
-  startHandler:(info: any) => void,
-  completionHandler: (info: any) => void,
-  progressHandler: (info: any) => void,
-  cancelHandler: (info: any) => void,
-  errorHandler: (info: any) => void,
+  startHandler?:(info: any) => void,
+  completionHandler?: (info: any) => void,
+  progressHandler?: (info: any) => void,
+  cancelHandler?: (info: any) => void,
+  errorHandler?: (info: any) => void,
 }) {
   const {
     url,
@@ -63,9 +63,10 @@ Downloader.prototype.addDownload = function (url, toPath, startHandler, completi
 
   const downloadBlock = () => {
     if (!alreadyDownloading) {
+      const toPathTmp = `${toPath}.~`;
       RNFS.downloadFile({
         fromUrl: url,
-        toFile: toPath,
+        toFile: toPathTmp,
         begin: (startInfo) => {
           // must check because this job may have been canceled when begin handler is called
           const downloadRecord = { ...startInfo, fromUrl:url, toFile:toPath };
@@ -84,7 +85,8 @@ Downloader.prototype.addDownload = function (url, toPath, startHandler, completi
         ),
       })
       .promise
-      .then((completeInfo) => {
+      .then(completeInfo => Promise.all([RNFS.moveFile(toPathTmp, toPath), completeInfo]))
+      .then(([didMove, completeInfo]) => {
         this._notifyComplete(url, completeInfo);
       })
       .catch((err) => {

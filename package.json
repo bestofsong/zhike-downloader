@@ -1,6 +1,6 @@
 {
   "name": "zhike-downloader",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "download manager",
   "main": "Downloader.js",
   "scripts": {
