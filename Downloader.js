@@ -9,6 +9,16 @@ import RNFS from 'react-native-fs';
 import _ from 'lodash';
 import PathUtils from 'zhike-path-utils';
 
+type Callback = (...args:Array<any>) => any;
+type RecordType = {
+  url: string,
+  starts: Set<Callback>,
+  completions: Set<Callback>,
+  progresses: Set<Callback>,
+  cancels: Set<Callback>,
+  errors: Set<Callback>,
+};
+
 const Downloader = function () {
   this.downloadRecords = new Map();// url -> {jobId, startInfo, starts, completions, progresses, cancels, errors}
   this._cancelRequests  = new Map();
@@ -26,6 +36,7 @@ Downloader.prototype.download = function (params: {
   progressHandler?: (info: any) => void,
   cancelHandler?: (info: any) => void,
   errorHandler?: (info: any) => void,
+  id?: string,
 }) {
   const {
     url,
@@ -34,7 +45,8 @@ Downloader.prototype.download = function (params: {
     completionHandler,
     progressHandler,
     cancelHandler,
-    errorHandler
+    errorHandler,
+    id,
   } = params;
   return this.addDownload(
     url,
@@ -43,18 +55,20 @@ Downloader.prototype.download = function (params: {
     completionHandler,
     progressHandler,
     cancelHandler,
-    errorHandler
+    errorHandler,
+    id || url
     );
 };
 
-Downloader.prototype.addDownload = function (url, toPath, startHandler, completionHandler, progressHandler, cancelHandler, errorHandler) {
+Downloader.prototype.addDownload = function (url, toPath, startHandler, completionHandler, progressHandler, cancelHandler, errorHandler, id) {
+  id = id || url;
   if (typeof url !== 'string' || url.length <= 0 ) {
     throw new Error(`invalid url: ${url}`);
   }
 
   // ignores toPath, only the first one to download this url is respected
-  const alreadyDownloading = this.downloadRecords.has(url);
-  this._registerImp(url, startHandler, completionHandler, progressHandler, cancelHandler, errorHandler);
+  const alreadyDownloading = this.downloadRecords.has(id);
+  this._registerImp(id, url, startHandler, completionHandler, progressHandler, cancelHandler, errorHandler);
 
   const clearAfterError = () => (RNFS.unlink(toPath)
     .catch((error) => {
@@ -72,14 +86,14 @@ Downloader.prototype.addDownload = function (url, toPath, startHandler, completi
           const downloadRecord = { ...startInfo, fromUrl:url, toFile:toPath };
           this._notifyStart(url, downloadRecord);
 
-          const cancel = this._cancelRequests.get(url);
+          const cancel = this._cancelRequests.get(id);
           cancel && cancel(downloadRecord);
-          cancel && this._cancelRequests.delete(url);
+          cancel && this._cancelRequests.delete(id);
         },
         // FIXME: will miss intermediate callbacks, event it may be edge ones, should fix this if have time
         progress: _.throttle(
           (progressInfo) => {
-            this._notifyProgress(url, progressInfo);
+            this._notifyProgress(id, progressInfo);
           },
           500,
         ),
@@ -87,25 +101,25 @@ Downloader.prototype.addDownload = function (url, toPath, startHandler, completi
       .promise
       .then(completeInfo => Promise.all([RNFS.moveFile(toPathTmp, toPath), completeInfo]))
       .then(([didMove, completeInfo]) => {
-        this._notifyComplete(url, completeInfo);
+        this._notifyComplete(id, completeInfo);
       })
       .catch((err) => {
         clearAfterError()
         .then(() => {
-          this._notifyError(url, err);
+          this._notifyError(id, err);
         });
       });
     } else {
       console.log(`already downloading ${url}`);
-      const record = this.downloadRecords.get(url);
+      const record = this.downloadRecords.get(id);
       if (record.startInfo) {
-        this._notifyStart(url, record.startInfo);
+        this._notifyStart(id, record.startInfo);
       }
     }
   };
 
   const ret = new UnRegisterer(() => {
-    this.unRegister(url, startHandler, completionHandler, progressHandler, cancelHandler, errorHandler);
+    this.unRegister(id, url, startHandler, completionHandler, progressHandler, cancelHandler, errorHandler);
   });
 
   PathUtils.mkdirForFilePathIfNeeded(toPath)
@@ -118,10 +132,6 @@ Downloader.prototype.addDownload = function (url, toPath, startHandler, completi
   });
 
   return ret;
-};
-
-Downloader.prototype.queryDownload = function (url) {
-  return url && this.downloadRecords.has(url);
 };
 
 Downloader.prototype._notifyStart = function (url, startInfo) {
@@ -163,19 +173,12 @@ Downloader.prototype._notifyError = function (url, errorInfo) {
   }
 };
 
-Downloader.prototype._registerImp = function (url, startHandler, completionHandler, progressHandler, cancelHandler, errorHandler) {
-  let record = this.downloadRecords.get(url);
+Downloader.prototype._registerImp = function (id, url, startHandler, completionHandler, progressHandler, cancelHandler, errorHandler) {
+  let record:RecordType = this.downloadRecords.get(id);
   if (!record) {
-    record = {};
+    record = { url, starts:new Set(), completions:new Set(), progresses:new Set(), cancels:new Set(), errors:new Set() };
     this.downloadRecords.set(url, record);
-
-    record.starts = new Set();
-    record.completions = new Set();
-    record.progresses = new Set();
-    record.cancels = new Set();
-    record.errors = new Set();
   }
-
   startHandler && record.starts.add(startHandler);
   completionHandler && record.completions.add(completionHandler);
   progressHandler && record.progresses.add(progressHandler);
@@ -183,8 +186,8 @@ Downloader.prototype._registerImp = function (url, startHandler, completionHandl
   errorHandler && record.errors.add(errorHandler);
 };
 
-Downloader.prototype.unRegister = function (url, startHandler, completionHandler, progressHandler, cancelHandler, errorHandler) {
-  const record = this.downloadRecords.get(url);
+Downloader.prototype.unRegister = function (id, startHandler, completionHandler, progressHandler, cancelHandler, errorHandler) {
+  const record = this.downloadRecords.get(id);
   console.log('unRegistering record: ', record);
   if (record) {
     startHandler && record.starts.delete(startHandler);
@@ -195,13 +198,13 @@ Downloader.prototype.unRegister = function (url, startHandler, completionHandler
   }
 };
 
-Downloader.prototype.cancelDownload = function (url, callback) {
-  const record = this.downloadRecords.get(url);
+Downloader.prototype.cancelDownload = function (id, callback) {
+  const record = this.downloadRecords.get(id);
 
   const cancelBlock = (startInfo) => {
     RNFS.stopDownload(startInfo.jobId);
-    callback && callback(url);
-    this._notifyCancel(url);
+    callback && callback(id);
+    this._notifyCancel(id);
 
     // FIXME: react-native-fs bug, stopDownload return nothing
     // .then(() => {
@@ -230,7 +233,7 @@ Downloader.prototype.cancelDownload = function (url, callback) {
         });
       }
     } else {
-      !this._cancelRequests.has(url) && this._cancelRequests.set(url, cancelBlock);
+      !this._cancelRequests.has(id) && this._cancelRequests.set(id, cancelBlock);
     }
   } else {
     console.warn('no record to cancel download');
